@@ -545,8 +545,54 @@ void     PluginLoader__HandleCommands(void *_ctx)
 
             DispMessage("Value", buf);
 
-            cmdbuf[0] = IPC_MakeHeader(14, 1, 0);
+            cmdbuf[0] = IPC_MakeHeader(15, 1, 0);
             cmdbuf[1] = 0;
+            
+            break;
+        }
+        case 16: // Create memory block
+        {
+            if (cmdbuf[0] != IPC_MakeHeader(16, 4, 0))
+            {
+                error(cmdbuf, 0xD9001830);
+                break;
+            }
+
+            u32 address = cmdbuf[1];
+            u32 size = cmdbuf[2];
+            MemPerm myPerm = cmdbuf[3];
+            MemPerm otherPerm = cmdbuf[4];
+            PluginLoaderContext *ctx = &PluginLoaderCtx;
+            Handle memblockHandle;
+            Result res;
+
+            // If specified address is in plugin heap
+            if(address >= ctx->header.heapVA && address < ctx->header.heapVA + ctx->header.heapSize)
+            {
+                address = (u32)ctx->memblock.memblock + ctx->header.exeSize + (address - ctx->header.heapVA);
+            }
+            // Invalid address
+            else if(address < (u32)ctx->memblock.memblock || address >= (u32)ctx->memblock.memblock + ctx->header.exeSize)
+            {
+                error(cmdbuf, 0xE0E01BF5);
+                break;
+            }
+
+            // Rosalina needs to be able to access this memory
+            myPerm |= (MEMPERM_READ | MEMPERM_WRITE);
+
+            if(R_SUCCEEDED(res = svcCreateMemoryBlock(&memblockHandle, address, size, myPerm, otherPerm)))
+            {
+                Handle tmp;
+                res = svcCopyHandle(&tmp, ctx->target, memblockHandle, CUR_PROCESS_HANDLE);
+                svcCloseHandle(memblockHandle);
+
+                memblockHandle = tmp;
+            }
+
+            cmdbuf[0] = IPC_MakeHeader(16, 2, 0);
+            cmdbuf[1] = res;
+            cmdbuf[2] = (u32)memblockHandle;
             
             break;
         }

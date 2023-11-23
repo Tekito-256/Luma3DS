@@ -138,6 +138,7 @@ static char *AskForFileName(PluginEntry *entries, u8 count)
         Draw_DrawString(10, 10, COLOR_TITLE, "Plugin selector");
         posY = Draw_DrawString(30, 30, COLOR_WHITE, "Some 3gx files were found.");
         posY = Draw_DrawString(30, posY + 10, COLOR_WHITE, "Select the 3gx file you want to use.");
+        posY = Draw_DrawString(30, posY + 10, COLOR_WHITE, "Press [X] to reorder the plugins.");
         posY = Draw_DrawString(20, posY + 15, COLOR_LIME, "Plugins:");
 
         for(u8 i = 0; i < count; i++)

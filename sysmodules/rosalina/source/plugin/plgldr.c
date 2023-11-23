@@ -289,7 +289,6 @@ Result  PLGLDR__SetExeLoadSettings(void* loadFunc, void* args)
 	return res;
 }
 
-
 void    PLGLDR__SetEventCallback(OnPlgLdrEventCb_t cb)
 {
     onPlgLdrEventCb = cb;

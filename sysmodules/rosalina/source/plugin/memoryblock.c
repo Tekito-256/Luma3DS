@@ -75,7 +75,7 @@ Result      MemoryBlock__IsReady(void)
     {
         memblock->isAppRegion = false;
         res = svcControlMemoryUnsafe((u32 *)&memblock->memblock, 0x07000000,
-                                    g_memBlockSize, MEMOP_REGION_SYSTEM | MEMOP_ALLOC | MEMOP_LINEAR_FLAG, MEMPERM_RW);
+                                    g_memBlockSize, MEMOP_REGION_SYSTEM | MEMOP_ALLOC, MEMPERM_RW);
     }
 
     if (R_FAILED(res)) {
