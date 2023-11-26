@@ -579,7 +579,7 @@ void     PluginLoader__HandleCommands(void *_ctx)
             }
 
             // Rosalina needs to be able to access this memory
-            myPerm |= (MEMPERM_READ | MEMPERM_WRITE);
+            myPerm |= (MEMPERM_READ);
 
             if(R_SUCCEEDED(res = svcCreateMemoryBlock(&memblockHandle, address, size, myPerm, otherPerm)))
             {
