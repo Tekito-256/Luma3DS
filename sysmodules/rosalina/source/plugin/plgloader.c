@@ -9,6 +9,7 @@
 #include "memory.h"
 #include "sleep.h"
 #include "task_runner.h"
+#include "draw.h"
 
 #define PLGLDR_VERSION (SYSTEM_VERSION(1, 0, 2))
 
@@ -19,9 +20,17 @@
 static const char *g_title = "Plugin loader";
 PluginLoaderContext PluginLoaderCtx;
 extern u32 g_blockMenuOpen;
+extern u64 g_titleId;
+extern u32 g_pid;
 
 void        IR__Patch(void);
 void        IR__Unpatch(void);
+
+bool PluginChecker_isEnabled = false;
+bool PluginWatcher_isEnabled = false;
+bool PluginWatcher_isRunning = false;
+bool PluginConverter_UseCache = false;
+u32  PluginWatcher_WatchLevel = 0;
 
 void        PluginLoader__Init(void)
 {
@@ -30,9 +39,16 @@ void        PluginLoader__Init(void)
     memset(ctx, 0, sizeof(PluginLoaderContext));
 
     s64 pluginLoaderFlags = 0;
+    s64 pluginWatcherLevel = 0;
 
     svcGetSystemInfo(&pluginLoaderFlags, 0x10000, 0x180);
     ctx->isEnabled = pluginLoaderFlags & 1;
+    PluginChecker_isEnabled  = ((pluginLoaderFlags & (1 << 1)) != 0);
+    PluginWatcher_isEnabled = ((pluginLoaderFlags & (1 << 2)) != 0);
+    PluginConverter_UseCache = ((pluginLoaderFlags & (1 << 3)) != 0);
+
+    svcGetSystemInfo(&pluginWatcherLevel, 0x10000, 0x182);
+    PluginWatcher_WatchLevel = (u32)pluginWatcherLevel;
 
     ctx->plgEventPA = (s32 *)PA_FROM_VA_PTR(&ctx->plgEvent);
     ctx->plgReplyPA = (s32 *)PA_FROM_VA_PTR(&ctx->plgReply);
@@ -139,6 +155,35 @@ static void j_PluginLoader__SetMode3AppMode(void* arg) {(void)arg; PluginLoader_
 void CheckMemory(void);
 
 void    PLG__NotifyEvent(PLG_Event event, bool signal);
+
+static bool PluginWatcher_AskSkip(const char *message)
+{
+    u32 posY;
+    u32 keys;
+
+    menuEnter();
+
+    ClearScreenQuickly();
+
+    Draw_Lock();
+
+    Draw_DrawString(10, 10, COLOR_TITLE, "Plugin Watcher");
+
+    posY = Draw_DrawString(30, 30, COLOR_WHITE, message);
+    posY = Draw_DrawString(30, posY + 30, COLOR_WHITE, "Press A to continue, press B to block.");
+
+    Draw_FlushFramebuffer();
+    Draw_Unlock();
+
+    do
+    {
+        keys = waitComboWithTimeout(1000);
+    } while(!(keys & KEY_A) && !(keys & KEY_B) && !menuShouldExit);
+
+    menuLeave();
+
+    return keys & KEY_B;
+}
 
 void     PluginLoader__HandleCommands(void *_ctx)
 {
@@ -470,6 +515,95 @@ void     PluginLoader__HandleCommands(void *_ctx)
             }
 
             cmdbuf[1] = 0;
+            break;
+        }
+
+        case 100: // Plugin Watcher
+        {
+            bool skip = false;
+
+            if(PluginWatcher_isRunning && cmdbuf[1] == g_pid)
+            {
+                u32 type = cmdbuf[2];
+                u32 watchLv = PluginWatcher_WatchLevel;
+
+                if(!(watchLv & (1 << type)))
+                {
+                    cmdbuf[0] = IPC_MakeHeader(14, 2, 0);
+                    cmdbuf[1] = 0;
+                    cmdbuf[2] = (u32)false;
+                    break;
+                }
+
+                char message[512];
+                memset(message, 0, 512);
+
+                if(type == 0 || type == 1)
+                {
+                    u8   fileName[256]; // For UTF-8 file name
+                    bool ignore = false;
+
+                    // Clear buffers
+                    memset(fileName, 0, 256);
+
+                    // Convert file name UTF-16 to UTF-8
+                    u32 u16NameAddr = ((u32)ctx->memblock.memblock + ctx->header.exeSize) + (cmdbuf[3] - ctx->header.heapVA);
+                    utf16_to_utf8((u8 *)fileName, (u16 *)u16NameAddr, cmdbuf[4]);
+
+                    sprintf(message, "/cheats/%016llX.txt", g_titleId);
+                    if(strncmp(message, (char *)fileName, strlen(message)) == 0 && strstr((char *)fileName, "..") == NULL)
+                        ignore = true;
+
+                    sprintf(message, "/luma/plugins/%016llX/", g_titleId);
+                    if(strncmp(message, (char *)fileName, strlen(message)) == 0 && strstr((char *)fileName, "..") == NULL)
+                        ignore = true;
+            
+                    if(!ignore) 
+                    {
+                        const char *target = (type == 0) ? "File" : "Directory";
+                        sprintf(message, "%s deletion detected.\n\nPath: %s", target, (char *)fileName);
+
+                        skip = PluginWatcher_AskSkip(message);
+                    }
+                }
+
+                else if(type == 2)
+                {
+                    u8 *ip = (u8 *)&cmdbuf[3];
+                    sprintf(message, "Internet connection detected.\n\nTarget IP address: %u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+
+                    skip = PluginWatcher_AskSkip(message);
+                }
+
+                else if(type == 3)
+                {
+                    sprintf(message, "Camera access detected.");
+                    skip = PluginWatcher_AskSkip(message);
+                }
+
+                else
+                {
+                    sprintf(message, "Type: %08lX\n\nLevel: %08lX", type, watchLv);
+                }
+            }
+
+            cmdbuf[0] = IPC_MakeHeader(14, 2, 0);
+            cmdbuf[1] = 0;
+            cmdbuf[2] = (u32)skip;
+            
+            break;
+        }
+        case 101: // Display value
+        {
+            char buf[50];
+
+            sprintf(buf, "%08lX pid: %d", cmdbuf[1], (int)cmdbuf[2]);
+
+            DispMessage("Value", buf);
+
+            cmdbuf[0] = IPC_MakeHeader(14, 1, 0);
+            cmdbuf[1] = 0;
+            
             break;
         }
 

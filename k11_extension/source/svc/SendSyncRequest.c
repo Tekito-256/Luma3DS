@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "svc/SendSyncRequest.h"
+#include "svc/TranslateHandle.h"
 #include "ipc.h"
 
 static inline bool isNdmuWorkaround(const SessionInfo *info, u32 pid)
@@ -250,6 +251,71 @@ Result SendSyncRequestHook(Handle handle)
                 if(info != NULL && strcmp(info->name, "cfg:i") == 0)
                     skip = doLangEmu(&res, cmdbuf);
 
+                break;
+            }
+
+            // For plugin watcher
+            case 0x8040142: // FSUSER_DeleteFile
+            case 0x8070142: // FSUSER_DeleteDirectoryRecursively
+            case 0x60084:   // socket connect
+            case 0x10040:   // CAMU_StartCapture
+            {
+                SessionInfo *info = SessionInfo_Lookup(clientSession->parentSession);
+                if(info != NULL && (strcmp(info->name, "fs:USER") == 0 || strcmp(info->name, "soc:U") == 0 || strcmp(info->name, "cam:u") == 0))
+                {
+                    Handle plgLdrHandle;
+                    SessionInfo *plgLdrInfo = SessionInfo_FindFirst("plg:ldr");
+                    if(plgLdrInfo != NULL && createHandleForThisProcess(&plgLdrHandle, &plgLdrInfo->session->clientSession.syncObject.autoObject) >= 0)
+                    {
+                        u32 header = cmdbuf[0];
+                        u32 cmdbufOrig[8];
+
+                        memcpy(cmdbufOrig, cmdbuf, sizeof(cmdbufOrig));
+
+                        if(strcmp(info->name, "fs:USER") == 0 && (header == 0x8040142 || header == 0x8070142)) // FSUSER_DeleteFile / FSUSER_DeleteDirectoryRecursively
+                        {
+                            if(cmdbufOrig[4] != 4 || !cmdbufOrig[5] || !cmdbufOrig[7])
+                            {
+                                CloseHandle(plgLdrHandle);
+                                break;
+                            }
+
+                            cmdbuf[0] = IPC_MakeHeader(100, 4, 0);
+                            cmdbuf[2] = (header == 0x8040142) ? 0 : 1;
+                            cmdbuf[3] = cmdbufOrig[7];
+                            cmdbuf[4] = cmdbufOrig[5];
+                        }
+                        else if(strcmp(info->name, "soc:U") == 0 && header == 0x60084) // socket connect
+                        {
+                            u32 *addr = (u32 *)cmdbuf[6] + 1;
+                            if(0x6000000 > (u32)addr || (u32)addr >= 0x8000000)
+                            {
+                                CloseHandle(plgLdrHandle);
+                                break;
+                            }
+
+                            cmdbuf[0] = IPC_MakeHeader(100, 3, 0);
+                            cmdbuf[2] = 2;
+                            cmdbuf[3] = *addr;
+                        }
+                        else if(strcmp(info->name, "cam:u") == 0 && header == 0x10040) // CAMU_StartCapture
+                        {
+                            cmdbuf[0] = IPC_MakeHeader(100, 2, 0);
+                            cmdbuf[2] = 3;
+                        }
+
+                        cmdbuf[1] = pid;
+                        
+                        if(SendSyncRequest(plgLdrHandle) >= 0)
+                            skip = cmdbuf[2];
+                            
+                        if(!skip)
+                            memcpy(cmdbuf, cmdbufOrig, sizeof(cmdbufOrig));
+    
+                        CloseHandle(plgLdrHandle);
+                    }
+                }
+    
                 break;
             }
         }
